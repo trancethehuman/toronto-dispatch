@@ -1,5 +1,11 @@
 # Testing record
 
+## Trailer — 2026-10-10
+
+- `scripts/capture_trailer.py` recorded 36 shots and the title and chase songs from the main build `main-3199527.gbc` (SHA-256 `f3fa6866…`, symbols from the `ip13` candidate, which differs only in the header checksum and build stamp) in PyBoy 2.7.0; `scripts/make_trailer.py` cut them into `project/build/trailer/toronto-dispatch-trailer.mp4` (not in Git): 100.0 s, 1920 x 1080, 60 fps, H.264 and AAC, 6,943,928 bytes, SHA-256 `213d2f0d0ee94391754251e22eaddd34edcfd2eb751738e18f0ec7e0e0cfd39e`, integrated loudness -14.5 LUFS. How it was staged and how to rebuild it: [docs/TRAILER.md](docs/TRAILER.md).
+- The footage itself shows, in this build: the first contract played from the job board to a delivery at St Lawrence Market (+$101), the CN Tower lobby, the elevator's altitude readout and a Sky Desk delivery (+$254), a busker's thanks ($1), a neighbour's parcel tip, a goose attack, a street fight won (+$10) and the King St West spray bay clearing three stars (-$25).
+- Not verified: how the trailer sounds on speakers (levels were measured, not listened to), and anything on the Chromatic.
+
 ## People, interiors, the gallery, indoor deliveries and combat — candidate, 2026-10-10
 
 GB Studio CLI `make:rom` (the plugin's vendored toolchain) and PyBoy 2.7.0 evidence on `codex/interiors-npcs-gallery`. "Previous" is the main build `164a9f65…` (above).
