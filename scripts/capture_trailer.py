@@ -42,6 +42,11 @@ SCENES = ("core_nw", "core_ne", "core_sw", "core_se", "west_nw", "west_ne", "wes
 # Play clock (td.seconds): 1,024 a day from 08:00. Day two brings rain.
 MIDDAY, GOLDEN, DUSK, NIGHT, DAWN, RAIN = 200, 455, 505, 620, 905, 1024 + 128 + 20
 EAST, SOUTH, WEST, NORTH = 0, 4, 8, 12
+# Logged with every recorded frame so the editor can cut on events (td.msg
+# is the HUD message just posted; the courier's screen position frames the
+# close-ups).
+META = ("x", "y", "u", "v", "cash", "speed", "onfoot", "mode", "stage", "vitality", "ammo", "wanted", "msg",
+        "interior", "hostile", "aim_who", "aim_time", "rolling", "shark", "radio")
 
 
 class Rig:
@@ -52,7 +57,7 @@ class Rig:
         self.mem = self.pb.memory
         self.syms = symbols
         self.held = set()
-        self.frames = self.pcm = None
+        self.frames = self.pcm = self.meta = None
         self.steps = []
         layout, off = {}, 0
         for name, fmt in TD_FIELDS:
@@ -109,6 +114,16 @@ class Rig:
             if recording:
                 self.frames.append(self.pb.screen.ndarray[:, :, :3].copy())
                 self.pcm.append(self.pb.sound.ndarray.copy())
+                self.meta.append(self.sample())
+
+    def sample(self):
+        t = self.td()
+        inside = self.u8("td_interior") != 255
+        u, v = (self.u16("in_u"), self.u16("in_v")) if inside else (t["u"] >> 4, t["v"] >> 4)
+        return (u - self.u16("scroll_x"), v - self.u16("scroll_y"), u, v, t["cash"], t["speed"], t["onfoot"],
+                t["mode"], t["stage"], t["vitality"], t["ammo"], t["wanted"], t["msg"], self.u8("td_interior"),
+                self.u8("td_npc_hostile"), self.u8("lf_aim_who"), self.u8("lf_aim_time"), self.u8("td_rolling"),
+                self.u8("shark_state"), self.u8("td_radio_script"))
 
     def press(self, button, frames=4, after=4):
         self.tick(frames, *([button] if isinstance(button, str) else button))
@@ -190,14 +205,15 @@ class Rig:
 
     # recording
     def begin(self):
-        self.frames, self.pcm = [], []
+        self.frames, self.pcm, self.meta = [], [], []
 
     def end(self, out, name):
         video = np.stack(self.frames)
         audio = np.concatenate(self.pcm).astype(np.int16) << 8
-        self.frames = self.pcm = None
+        meta = np.array(self.meta, np.int32)
+        self.frames = self.pcm = self.meta = None
         self.hold()
-        np.savez_compressed(out / f"{name}.npz", frames=video)
+        np.savez_compressed(out / f"{name}.npz", frames=video, meta=meta, columns=np.array(META))
         write_wav(out / f"{name}.wav", audio)
         return len(video)
 
@@ -410,34 +426,6 @@ def shot_drift(r, out, name):
     return r.record(out, name, n, each=each(r))
 
 
-def shot_run(r, out, name):
-    r.warp(3, 560, 400, EAST, MIDDAY)
-    each, n = control((30, ("right",)), (240, ("right", "a")))
-    return r.record(out, name, n, each=each(r))
-
-
-def shot_cops_on_foot(r, out, name):
-    """Four stars on foot on King St: officers close in, stop and aim
-    (flashing) and fire; the courier rolls away from each aim."""
-    r.warp(3, 600, 400, EAST, MIDDAY)
-    state = {"roll": 0}
-
-    def each(i):
-        r.put(wanted=4, heat=12, vitality=100)
-        if state["roll"] == 0 and i > 60 and r.u8("lf_aim_who") < 8 and r.u8("lf_aim_time") < 10:
-            state["roll"] = 20
-        if state["roll"] > 0:
-            state["roll"] -= 1
-            r.hold("up") if state["roll"] > 14 else r.hold("up", "a", "b")
-            if state["roll"] == 0:
-                state["roll"] = -60
-        else:
-            if state["roll"] < 0:
-                state["roll"] += 1
-            r.hold()
-    return r.record(out, name, 720, each=each)
-
-
 def chase(stars, scene, u, v, heading, clock, *plan):
     def shot(r, out, name):
         r.warp(scene, u, v, heading, clock)
@@ -481,25 +469,65 @@ def shot_tank(r, out, name):
     return r.end(out, name)
 
 
-def shot_street_fight(r, out, name):
-    k = find_people(r, ("TOUGH", "RAGER"), STREETS * 2)
-    if k is None:
-        return 0
-    x, y = actor_pos(r, k)
-    r.place(x - 12, y, EAST)
-    r.note("beside a tough or road rager found in the street crowd; lingering starts the fight")
-    state = {"t": 0}
-
-    def each(i):
-        r.put(vitality=100)
-        if not r.u8("td_npc_hostile") & (1 << k) and state["t"] == 0 and i < 420:
-            x, y = actor_pos(r, k)
-            r.put(u=(x - 12) * 16, v=y * 16)
-            r.hold()
-        else:
-            state["t"] += 1
-            r.hold("a") if state["t"] % 16 < 3 else r.hold()
-    return r.record(out, name, 600, each=each)
+def fight(finish):
+    """A tough or road rager found in the crowd: linger beside them until
+    they start a fight, then finish it with a counter (a punch during their
+    telegraphed swing) or a haymaker (A held standing still, let go as they
+    close in)."""
+    def shot(r, out, name):
+        k = find_people(r, ("TOUGH", "RAGER"), STREETS * 3)
+        if k is None:
+            return 0
+        x, y = actor_pos(r, k)
+        r.place(x - 12, y, EAST)
+        r.tick(1, "right")
+        r.hold()
+        r.note(f"beside a tough or road rager found in the crowd; lingering starts the fight; {finish}")
+        r.begin()
+        state = {"phase": 0, "held": 0, "after": 0}
+        for _ in range(1200):
+            r.put(vitality=100)
+            fx, fy = actor_pos(r, k)
+            hostile = r.u8("td_npc_hostile") & (1 << k)
+            t = r.td()
+            cu, cv = t["u"] >> 4, t["v"] >> 4
+            if state["phase"] == 0:
+                if hostile:
+                    state["phase"] = 1
+                    r.tick(1, "right" if fx >= cu else "left")
+                    r.hold()
+                    continue
+                r.put(u=(fx - 12) * 16, v=fy * 16)
+                r.tick(1)
+            elif state["phase"] == 1 and finish == "counter":
+                if r.u8("td_slot_pose", k) == 3:
+                    r.tick(1, "right" if fx >= cu else "left")
+                    r.press("a", 2, 1)
+                    if t["msg"] == 43 or r.td()["msg"] == 43:
+                        state["phase"] = 2
+                else:
+                    r.tick(1)
+                if r.td()["msg"] == 43:
+                    state["phase"] = 2
+            elif state["phase"] == 1:
+                ahead = 4 <= (fx - cu if fx >= cu else cu - fx) <= 18 and abs(fy - cv) < 10
+                if state["held"] >= 64 and ahead:  # the charge counts every other update
+                    r.hold()
+                    r.tick(2)
+                    if r.td()["msg"] == 46:
+                        state["phase"] = 2
+                    state["held"] = 0
+                else:
+                    state["held"] += 1
+                    r.tick(1, "a")
+            else:
+                r.hold()
+                r.tick(1)
+                state["after"] += 1
+                if state["after"] > 120:
+                    break
+        return r.end(out, name)
+    return shot
 
 
 def shot_goose(r, out, name):
@@ -557,6 +585,45 @@ def beside(behaviours, gap, *plan, spots=STREETS * 2):
             step(i)
         return r.record(out, name, n, each=tick)
     return shot
+
+
+def shot_carjack(r, out, name):
+    """On foot on King St: step up to a car in traffic and take it with A;
+    the driver runs off."""
+    r.warp(3, 300, 380, EAST, MIDDAY)
+    r.tick(60)
+    for _ in range(120):
+        r.tick(5)
+        sx, sy = r.u16("scroll_x"), r.u16("scroll_y")
+        for i in range(6):
+            a = r.sym("actors") + 56 * (2 + i)
+            if r.mem[a] & 2:
+                continue
+            tu = (r.mem[r.sym("td_traffic_u") + 2 * i] | (r.mem[r.sym("td_traffic_u") + 2 * i + 1] << 8)) >> 4
+            tv = (r.mem[r.sym("td_traffic_v") + 2 * i] | (r.mem[r.sym("td_traffic_v") + 2 * i + 1] << 8)) >> 4
+            if 40 <= tu - sx < 120 and 40 <= tv - sy < 100:
+                r.begin()
+                r.place(tu - 12, tv, EAST)
+                r.tick(6)
+                r.press("a", 4, 30)
+                if r.td()["onfoot"]:
+                    r.frames = r.pcm = r.meta = None
+                    continue
+                r.tick(150, "a")
+                r.note("on foot beside a car in King St traffic, A takes it")
+                return r.end(out, name)
+    return 0
+
+
+def shot_punch(r, out, name):
+    k = find_people(r, ("WALK", "SLOW"), STREETS)
+    if k is None:
+        return 0
+    x, y = actor_pos(r, k)
+    r.place(x - 10, y, EAST)
+    r.note("beside a walker: three quick punches")
+    each, n = control((6, ()), (3, ("a",)), (5, ()), (3, ("a",)), (5, ()), (3, ("a",)), (120, ()))
+    return r.record(out, name, n, each=each(r))
 
 
 def shot_pistol(r, out, name):
@@ -648,16 +715,39 @@ def shot_ago_card(r, out, name):
 
 
 def shot_shark(r, out, name):
+    """Out into open water off the Islands until a shark circles, then swim
+    at it when it closes in, until it bites."""
     r.warp(3, 740, 740, SOUTH, MIDDAY)
-    r.tick(150, "down")
+    for _ in range(900):  # across the channel and the Island, into the lake
+        r.tick(1, "down")
+        if r.td()["v"] >> 4 >= 944:
+            break
     r.hold()
     for _ in range(3600):
         r.put(vitality=100)
         r.tick(1)
         if r.u8("shark_state"):
             break
-    r.note("treading water off the Islands until a shark comes")
-    return r.record(out, name, 420, each=lambda i: r.put(vitality=100) if i < 200 else None)
+    r.note("swam out from the Islands until a shark circled; swam at it as it closed in")
+    r.begin()
+    after = 0
+    for i in range(1500):
+        t = r.td()
+        if r.u8("shark_state") == 2:
+            su = r.mem[r.sym("shark_u")] | (r.mem[r.sym("shark_u") + 1] << 8)
+            sv = r.mem[r.sym("shark_v")] | (r.mem[r.sym("shark_v") + 1] << 8)
+            pu, pv = t["u"] >> 4, t["v"] >> 4
+            b = (["right"] if su > pu + 2 else ["left"] if su < pu - 2 else []) + \
+                (["down"] if sv > pv + 2 else ["up"] if sv < pv - 2 else [])
+            r.tick(1, *b) if b else (r.hold(), r.tick(1))
+        else:
+            r.hold()
+            r.tick(1)
+        if after or r.td()["msg"] == 37:
+            after += 1
+            if after > 120:
+                break
+    return r.end(out, name)
 
 
 def shot_gallery(r, out, name):
@@ -688,32 +778,28 @@ SHOTS = {
     "front_golden": (CAR, drive(3, 100, 572, EAST, GOLDEN)),
     "king_night": (CAR, drive(3, 100, 396, EAST, NIGHT)),
     "queen_rain": (CAR, shot_queen_rain),
-    "spadina_north": (CAR, drive(2, 910, 420, NORTH, MIDDAY + 60)),
     "high_park_drive": (CAR, drive(9, 880, 660, SOUTH, GOLDEN - 40)),
     "danforth": (CAR, drive(13, 100, 140, EAST, DAWN)),
     "chinatown_walk": (FOOT, walk(0, 924, 878, WEST, MIDDAY, "left")),
     "yonge_dundas": (FOOT, walk(1, 330, 890, EAST, DUSK, "right")),
     "harbour_swim": (FOOT, swim()),
     "shark": (FOOT, shot_shark),
-    "police_boat": (FOOT, swim(2, 600)),
     "delivery": (CAR, shot_delivery),
     "drift": (CAR, shot_drift),
-    "run": (FOOT, shot_run),
-    "cops_on_foot": (FOOT, shot_cops_on_foot),
     "heli_chase": (CAR, chase(4, 3, 100, 396, EAST, MIDDAY, (260, ("a",)), (40, ("a", "left")), (180, ("a",)))),
     "pursuit": (CAR, chase(3, 3, 100, 572, EAST, DUSK, (480, ("a",)))),
     "night_chase": (CAR, chase(3, 3, 100, 206, EAST, NIGHT + 40, (480, ("a",)))),
     "tank": (FOOT, shot_tank),
-    "street_fight": (FOOT, shot_street_fight),
-    "haymaker": (FOOT, beside(("WALK", "SLOW"), 10, (20, ()), (2, ("a",)), (2, ()), (38, ("a",)), (140, ()),
-                              spots=STREETS)),
+    "street_fight": (FOOT, fight("counter")),
+    "haymaker_fight": (FOOT, fight("haymaker")),
     "goose": (FOOT, shot_goose),
     "busker": (FOOT, beside(("BUSK",), 10, (12, ()), (4, ("select",)), (300, ()))),
     "neighbour": (FOOT, beside(("BEG", "SIT"), 10, (12, ()), (4, ("select",)), (300, ()), spots=STREETS * 4)),
     "pistol": (FOOT, shot_pistol),
+    "carjack": (FOOT, shot_carjack),
+    "punch": (FOOT, shot_punch),
     "spray": (CAR, shot_spray),
     "cn_tower": (FOOT, shot_cn_tower),
-    "ago_walk": (FOOT, interior_walk("ART GALLERY (AGO)", (150, ("up",)), (90, ("left",)))),
     "rom_walk": (FOOT, interior_walk("ROYAL ONT. MUSEUM", (200, ("up",)))),
     "eaton_walk": (FOOT, interior_walk("EATON CENTRE", (120, ("up",)), (120, ("left",)))),
     "dragon_walk": (FOOT, interior_walk("DRAGON CITY MALL", (180, ("up",)), (60, ("right",)))),

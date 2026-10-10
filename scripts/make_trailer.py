@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Cut the trailer from the footage scripts/capture_trailer.py recorded.
 
-Three parts on the game's own music: the city and the story on the title
-theme (120 BPM, cuts every two-second bar), the work on the rest of the
-title theme, and the trouble on the chase theme (160 BPM, cuts every
-one-and-a-half-second bar), then the logo. Game frames are only cropped and
-scaled by whole numbers (nearest neighbour); three presentations are used:
-letterbox (a 160 x 67 strip at 12x, a place caption under it), full (a
-160 x 90 strip at 12x, edge to edge) and screen (the whole 160 x 144 frame
-at 7x on a blurred copy of itself, so the HUD and radio strip read). Cards
-are set in the game's own font (scripts/ui_art.py). Sound effects recorded
-with each shot sit under the music in the last part; the mix is normalised
-to -14 LUFS.
+About fifty seconds on the game's chase theme (160 BPM, cuts on its beats),
+ending on the title theme under the logo. Every shot starts just before the
+thing it shows: in-points are found from the events capture_trailer.py logs
+with each frame (the HUD message just posted, cash, stars, health, ammo, the
+courier getting into a car), so the punch lands, the card pops or the shark
+bites within the first beat. Fights and stunts are close-ups that follow
+the courier; mechanics carry a short label.
+
+Game frames are only cropped and scaled by whole numbers (nearest
+neighbour). Presentations: letterbox (a 160 x 67 strip at 12x, the place
+under it), full (160 x 90 at 12x), zoom (a smaller window at 16x or 20x that
+follows the courier) and screen (the whole 160 x 144 frame at 6x on a
+blurred copy of itself, so the HUD and radio strip read). Cards use the
+game's own font (scripts/ui_art.py); the mix is normalised to -14 LUFS.
 
   make_trailer.py [--footage project/build/trailer] [--output .../toronto-dispatch-trailer.mp4] [--preview DIR]
 
@@ -31,83 +34,115 @@ import ui_art  # noqa: E402
 
 GAME = Path(__file__).resolve().parents[1]
 W, H, FPS, RATE = 1920, 1080, 60, 48000
-WHITE, GOLD, GREY = (244, 240, 230), (240, 176, 48), (150, 150, 160)
-TITLE_BAR, CHASE_BAR = 2.0, 1.5
-CHASE_AT = 64.0  # the title theme's 32 bars
+WHITE, GOLD, GREY, INK = (244, 240, 230), (240, 176, 48), (150, 150, 160), (16, 16, 24)
+BEAT = 60 / 160  # the chase theme
+# td.msg values (td_life.h) used as in-points.
+CARJACK, SHOT_AT, CRASH, RESPRAYED, BITTEN, GOOSE, BRAWL, COUNTER, HAYMAKER, LIFT = 18, 19, 5, 33, 37, 41, 42, 43, 46, 51
 
-# (seconds, kind, args). Kinds: letterbox/full/screen (clip, first frame,
-# crop row or caption), card (lines), logo. Keys: fade_in, fade_out, flash, sfx.
-T, C = TITLE_BAR, CHASE_BAR
+
+def ev(field, value=None, offset=0):
+    """An in-point: the first frame where field changes (to value, if
+    given), plus offset frames."""
+    return (field, value, offset)
+
+
+# (beats, kind, args). Kinds: letterbox, full, zoom, screen, card, logo.
+# args: clip, at (frame or ev(...)), y0 (crop row), z (zoom scale), dx/dy
+# (zoom offset from the courier), label (label_top), caption, lines, flash,
+# fade_in, fade_out, sfx.
 TIMELINE = [
-    # The city, on the title theme.
-    (2 * T, "letterbox", dict(clip="title", at=60, y0=34, fade_in=1.0)),
-    (T, "card", dict(lines=[("TORONTO.", 16, WHITE)])),
-    (T, "letterbox", dict(clip="front_golden", at=100, y0=30, caption="FRONT ST, UNION STATION")),
-    (T, "letterbox", dict(clip="chinatown_walk", at=60, y0=26, caption="CHINATOWN, SPADINA AND DUNDAS")),
-    (T, "letterbox", dict(clip="queen_rain", at=60, y0=16, caption="QUEEN ST, THE 501 IN THE RAIN")),
-    (T, "letterbox", dict(clip="high_park_drive", at=100, y0=30, caption="PARKSIDE DR, HIGH PARK")),
-    (T, "letterbox", dict(clip="king_night", at=100, y0=30, caption="KING ST AFTER DARK")),
-    (2 * T, "screen", dict(clip="opening_radio", at=270)),
-    (T, "letterbox", dict(clip="danforth", at=100, y0=30, caption="THE DANFORTH AT DAWN")),
-    (T, "letterbox", dict(clip="harbour_swim", at=60, y0=40, caption="THE TORONTO ISLANDS")),
-    (2 * T, "screen", dict(clip="opening_radio", at=555)),
-    (2 * T, "screen", dict(clip="opening_radio", at=875)),
+    # Cold open: the fight and the chase first.
+    (3, "zoom", dict(clip="haymaker_fight", at=ev("msg", HAYMAKER, -34), z=20, dx=8, label="HAYMAKER", sfx=True)),
+    (3, "zoom", dict(clip="street_fight", at=ev("msg", COUNTER, -20), z=20, dx=8, label="COUNTER", sfx=True)),
+    (3, "zoom", dict(clip="carjack", at=0, z=20, dx=6, label="TAKE ANY CAR", sfx=True)),
+    (3, "full", dict(clip="heli_chase", at=120, y0=14, label="OUTRUN THE POLICE", sfx=True)),
+    (4, "logo", dict(clip="title", at=200, flash=0.12)),
+    # The city.
+    (2, "letterbox", dict(clip="front_golden", at=110, y0=30, caption="FRONT ST, UNION STATION")),
+    (2, "letterbox", dict(clip="chinatown_walk", at=60, y0=26, caption="CHINATOWN, SPADINA AVE")),
+    (2, "letterbox", dict(clip="queen_rain", at=40, y0=16, caption="QUEEN ST, THE 501")),
+    (2, "letterbox", dict(clip="yonge_dundas", at=60, y0=30, caption="YONGE-DUNDAS")),
+    (2, "letterbox", dict(clip="high_park_drive", at=100, y0=30, caption="HIGH PARK")),
+    (2, "letterbox", dict(clip="king_night", at=100, y0=30, caption="KING ST AFTER DARK")),
+    (2, "letterbox", dict(clip="danforth", at=100, y0=30, caption="THE DANFORTH")),
+    (2, "letterbox", dict(clip="harbour_swim", at=60, y0=40, caption="THE TORONTO ISLANDS")),
+    # The story.
+    (4, "screen", dict(clip="opening_radio", at=330)),
+    (4, "screen", dict(clip="opening_radio", at=650)),
+    (4, "card", dict(lines=[("WIN THE FESTIVAL CONTRACT.", 7, WHITE), ("OR LOSE THE DEPOT.", 7, GOLD)])),
+    (4, "card", dict(lines=[("SHE SAYS NO?", 9, WHITE), ("WE'LL SEE.", 9, WHITE), ("VANCE, RUSHLY", 4, GOLD)])),
     # The work.
-    (T, "card", dict(lines=[("WIN THE FESTIVAL CONTRACT.", 7, WHITE), ("OR LOSE THE DEPOT.", 7, GOLD)])),
-    (T, "screen", dict(clip="delivery", at=100)),
-    (T, "full", dict(clip="delivery", at=700, y0=20)),
-    (T, "screen", dict(clip="delivery", at=850)),
-    (T, "screen", dict(clip="cn_enter", at=80)),
-    (T, "screen", dict(clip="cn_ride", at=60)),
-    (T, "screen", dict(clip="cn_desk", at=10)),
-    (T, "screen", dict(clip="ago_card", at=280)),
-    (T, "full", dict(clip="rom_walk", at=40, y0=10)),
-    (T, "full", dict(clip="eaton_walk", at=60, y0=20)),
-    (T, "full", dict(clip="dragon_walk", at=60, y0=20)),
-    (T, "full", dict(clip="byte_walk", at=60, y0=20)),
-    (T, "screen", dict(clip="gallery", at=650)),
-    (T, "screen", dict(clip="busker", at=40)),
-    (T, "screen", dict(clip="neighbour", at=30)),
-    (T, "screen", dict(clip="goose", at=30, fade_out=0.25)),
-    # The trouble, on the chase theme.
-    (2 * C, "card", dict(lines=[("SHE SAYS NO?", 9, WHITE), ("WE'LL SEE.", 9, WHITE), ("VANCE, RUSHLY", 4, GOLD)],
-                         flash=0.15)),
-    (C, "full", dict(clip="heli_chase", at=0, y0=20, sfx=True)),
-    (C, "full", dict(clip="cops_on_foot", at=130, y0=10, sfx=True)),
-    (C, "full", dict(clip="night_chase", at=100, y0=20, sfx=True)),
-    (C, "screen", dict(clip="street_fight", at=200, sfx=True)),
-    (C, "full", dict(clip="haymaker", at=10, y0=20, sfx=True)),
-    (C, "full", dict(clip="pistol", at=60, y0=20, sfx=True)),
-    (C, "full", dict(clip="tank", at=180, y0=20, sfx=True)),
-    (C, "full", dict(clip="drift", at=120, y0=20, sfx=True)),
-    (C, "full", dict(clip="shark", at=80, y0=20, sfx=True)),
-    (C, "screen", dict(clip="heli_chase", at=150, sfx=True)),
-    (C, "full", dict(clip="heli_chase", at=230, y0=20, sfx=True)),
-    (C, "screen", dict(clip="spray", at=200, sfx=True)),
-    (C, "full", dict(clip="pursuit", at=140, y0=20, sfx=True)),
-    (C, "full", dict(clip="run", at=20, y0=20, sfx=True)),
-    (2 * C, "card", dict(lines=[("SHOW THEM WHO", 9, WHITE), ("DELIVERS THIS CITY.", 9, WHITE), ("MARGO", 4, GOLD)])),
-    # The logo.
-    (5.0, "logo", dict(clip="title", at=200, flash=0.25)),
-    (4.0, "card", dict(lines=[("A HOMEBREW GAME FOR", 4, GREY), ("MODRETRO CHROMATIC", 6, WHITE),
-                              ("AND GAME BOY COLOR", 6, WHITE), ("", 3, GREY),
-                              ("GITHUB.COM/TRANCETHEHUMAN/TORONTO-DISPATCH", 3, GREY)], fade_in=0.4, fade_out=1.5)),
+    (2, "screen", dict(clip="delivery", at=8, label="TAKE THE JOB")),
+    (2, "full", dict(clip="delivery", at=700, y0=20, label="DELIVER ACROSS TORONTO")),
+    (3, "screen", dict(clip="delivery", at=ev("cash", None, -4))),
+    (2, "screen", dict(clip="cn_enter", at=ev("msg", LIFT, 6), label="INTO THE CN TOWER")),
+    (3, "screen", dict(clip="cn_ride", at=70, label="ELEVATOR TO 346 M")),
+    (2, "screen", dict(clip="cn_desk", at=ev("cash", None, -2))),
+    (3, "screen", dict(clip="ago_card", at=290, label="TALK TO ANYONE")),
+    (2, "full", dict(clip="rom_walk", at=40, y0=10, caption="ROYAL ONTARIO MUSEUM")),
+    (2, "full", dict(clip="eaton_walk", at=60, y0=20, caption="EATON CENTRE")),
+    (2, "full", dict(clip="dragon_walk", at=60, y0=20, caption="DRAGON CITY MALL")),
+    (2, "full", dict(clip="byte_walk", at=60, y0=20, caption="BYTE BARN")),
+    (3, "screen", dict(clip="busker", at=ev("cash", None, 24), label="TIP THE BUSKERS")),
+    (3, "screen", dict(clip="neighbour", at=ev("cash", None, 24), label="ASK AROUND")),
+    (3, "screen", dict(clip="gallery", at=650, label="THE GALLERY")),
+    # The trouble.
+    (3, "zoom", dict(clip="goose", at=ev("msg", GOOSE, -8), z=20, dx=14, label="MIND THE GEESE", sfx=True)),
+    (3, "zoom", dict(clip="pistol", at=24, z=12, dx=20, label="SHOOT", sfx=True)),
+    (3, "zoom", dict(clip="punch", at=0, z=20, dx=6, label="PUNCH", sfx=True)),
+    (3, "full", dict(clip="drift", at=140, y0=14, label="DRIFT", sfx=True)),
+    (2, "full", dict(clip="drift", at=ev("msg", CRASH, -6), y0=14, sfx=True)),
+    (3, "zoom", dict(clip="shark", at=ev("msg", BITTEN, -40), z=12, label="MIND THE SHARKS", label_top=True, sfx=True)),
+    (3, "full", dict(clip="tank", at=120, y0=20, label="STEAL A TANK", sfx=True)),
+    (2, "full", dict(clip="night_chase", at=150, y0=20, sfx=True)),
+    (2, "full", dict(clip="heli_chase", at=ev("msg", CRASH, -10), y0=14, sfx=True)),
+    (2, "full", dict(clip="pursuit", at=110, y0=20, sfx=True)),
+    (4, "screen", dict(clip="spray", at=ev("msg", RESPRAYED, -20), label="LOSE THE STARS", sfx=True)),
+    (4, "card", dict(lines=[("SHOW THEM WHO", 9, WHITE), ("DELIVERS THIS CITY.", 9, WHITE), ("MARGO", 4, GOLD)])),
+    # The logo, on the title theme.
+    (8, "logo", dict(clip="title", at=200, flash=0.2, title_theme=True)),
+    (6, "card", dict(lines=[("A HOMEBREW GAME FOR", 4, GREY), ("MODRETRO CHROMATIC", 6, WHITE),
+                            ("AND GAME BOY COLOR", 6, WHITE), ("", 3, GREY),
+                            ("GITHUB.COM/TRANCETHEHUMAN/TORONTO-DISPATCH", 3, GREY)], fade_in=0.3, fade_out=1.2)),
 ]
 
 
 class Footage:
     def __init__(self, folder):
         self.folder = folder
-        self.frames, self.audio = {}, {}
+        self.data, self.audio = {}, {}
 
-    def clip(self, name):
-        if name not in self.frames:
-            self.frames[name] = np.load(self.folder / f"{name}.npz")["frames"]
-        return self.frames[name]
+    def load(self, name):
+        if name not in self.data:
+            d = np.load(self.folder / f"{name}.npz")
+            cols = list(d["columns"]) if "columns" in d else []
+            self.data[name] = (d["frames"], d["meta"] if "meta" in d else None, cols)
+        return self.data[name]
+
+    def frames(self, name):
+        return self.load(name)[0]
 
     def frame(self, name, i):
-        f = self.clip(name)
-        return f[min(i, len(f) - 1)]
+        f = self.frames(name)
+        return f[max(0, min(i, len(f) - 1))]
+
+    def meta(self, name, i, field):
+        _, meta, cols = self.load(name)
+        if meta is None or field not in cols:
+            return None
+        return meta[max(0, min(i, len(meta) - 1)), cols.index(field)]
+
+    def start(self, name, at):
+        """Resolve an in-point (a frame number or ev(...))."""
+        if isinstance(at, int):
+            return at
+        field, value, offset = at
+        _, meta, cols = self.load(name)
+        col = meta[:, cols.index(field)]
+        for i in range(1, len(col)):
+            if col[i] != col[i - 1] and (value is None or col[i] == value):
+                return max(0, i + offset)
+        raise SystemExit(f"{name}: no {field} event {value}")
 
     def sound(self, name):
         if name not in self.audio:
@@ -117,25 +152,51 @@ class Footage:
         return self.audio[name]
 
 
-def text_image(lines, width=W):
-    """Lines of (text, scale, colour) in the game's 8 x 8 font, centred."""
+def text_image(lines, width=W, outline=False):
+    """Lines of (text, scale, colour) in the game's 8 x 8 font, centred; with
+    outline, every glyph gets a one-pixel (game pixel) ink border."""
     rows = []
     for text, scale, colour in lines:
-        line = np.zeros((8 * scale, max(1, 8 * scale * len(text)), 3), np.uint8)
+        mask = np.zeros((8, max(1, 8 * len(text))), bool)
         for n, ch in enumerate(text):
-            glyph = np.array([[c == "#" for c in row] for row in ui_art.font_rows(ch if ch in ui_art.FONT else " ")])
-            block = np.kron(glyph, np.ones((scale, scale), bool))
-            line[:, n * 8 * scale:(n + 1) * 8 * scale][block] = colour
-        rows.append((line, scale))
+            glyph = ui_art.font_rows(ch if ch in ui_art.FONT else " ")
+            mask[:, n * 8:(n + 1) * 8] = [[c == "#" for c in row] for row in glyph]
+        if outline:
+            pad = np.pad(mask, 1)
+            ring = np.zeros_like(pad)
+            for dy in (-1, 0, 1):
+                for dx in (-1, 0, 1):
+                    ring |= np.roll(np.roll(pad, dy, 0), dx, 1)
+            line = np.zeros(pad.shape + (4,), np.uint8)
+            line[ring] = INK + (255,)
+            line[pad] = colour + (255,)
+        else:
+            line = np.zeros(mask.shape + (4,), np.uint8)
+            line[mask] = colour + (255,)
+        rows.append((np.kron(line, np.ones((scale, scale, 1), np.uint8)), scale))
     gap = lambda s: 3 * s  # noqa: E731
     total = sum(r.shape[0] for r, _ in rows) + sum(gap(s) for _, s in rows[:-1])
-    out = np.zeros((total, width, 3), np.uint8)
+    out = np.zeros((total, width, 4), np.uint8)
     y = 0
     for line, scale in rows:
-        x = (width - line.shape[1]) // 2
-        out[y:y + line.shape[0], max(0, x):max(0, x) + line.shape[1]] = line[:, :min(line.shape[1], width)]
+        w = min(line.shape[1], width)
+        x = (width - w) // 2
+        out[y:y + line.shape[0], x:x + w] = line[:, :w]
         y += line.shape[0] + gap(scale)
     return out
+
+
+def paste(dst, rgba, x, y):
+    h, w = rgba.shape[:2]
+    region = dst[y:y + h, x:x + w]
+    a = rgba[:, :, 3:4].astype(np.float32) / 255
+    region[:] = (region * (1 - a) + rgba[:, :, :3] * a).astype(np.uint8)
+
+
+def label_image(text, scale=6):
+    t = text_image([(text, scale, WHITE)], width=8 * scale * (len(text) + 2), outline=True)
+    cols = np.nonzero(t[:, :, 3].max(axis=0))[0]
+    return t[:, cols[0]:cols[-1] + 1]
 
 
 def scale_up(img, k):
@@ -147,46 +208,83 @@ def letterbox(frame, y0, caption=None):
     out[138:138 + 804] = scale_up(frame[y0:y0 + 67], 12)
     if caption:
         t = text_image([(caption, 3, GREY)])
-        out[1000:1000 + t.shape[0]] = np.maximum(out[1000:1000 + t.shape[0]], t)
+        paste(out, t, 0, 1000)
     return out
 
 
-def full(frame, y0):
-    return scale_up(frame[y0:y0 + 90], 12)
+def window(frame, z, cx, cy):
+    """A W/z x H/z window of the frame centred near (cx, cy), at z x."""
+    w, h = -(-W // z), -(-H // z)
+    x0 = int(round(min(max(cx - w / 2, 0), 160 - w)))
+    y0 = int(round(min(max(cy - h / 2, 0), 120 - h)))  # above the HUD rows
+    big = scale_up(frame[y0:y0 + h, x0:x0 + w], z)
+    return big[:H, :W]
 
 
 def screen(frame):
     small = Image.fromarray(frame).resize((40, 36), Image.BILINEAR).filter(ImageFilter.GaussianBlur(1.2))
     bg = np.asarray(small.resize((W, int(W * 144 / 160)), Image.BILINEAR))
     top = (bg.shape[0] - H) // 2
-    out = (bg[top:top + H].astype(np.float32) * 0.32).astype(np.uint8)
-    x, y = (W - 1120) // 2, (H - 1008) // 2
-    out[y - 6:y + 1008 + 6, x - 6:x + 1120 + 6] = 12
-    out[y:y + 1008, x:x + 1120] = scale_up(frame, 7)
+    out = (bg[top:top + H].astype(np.float32) * 0.3).astype(np.uint8)
+    x, y = (W - 960) // 2, 72
+    out[y - 6:y + 864 + 6, x - 6:x + 960 + 6] = 12
+    out[y:y + 864, x:x + 960] = scale_up(frame, 6)
     return out
 
 
 def card(lines):
     out = np.zeros((H, W, 3), np.uint8)
     t = text_image(lines)
-    y = (H - t.shape[0]) // 2
-    out[y:y + t.shape[0]] = t
+    paste(out, t, 0, (H - t.shape[0]) // 2)
     return out
 
 
-def render(footage, kind, args, i):
-    if kind == "card":
-        return card(args["lines"])
-    f = footage.frame(args["clip"], args["at"] + i)
-    if kind == "letterbox":
-        return letterbox(f, args["y0"], args.get("caption"))
-    if kind == "full":
-        return full(f, args["y0"])
-    if kind == "screen":
-        return screen(f)
-    if kind == "logo":
-        return full(f, 0)
-    raise ValueError(kind)
+class Shot:
+    def __init__(self, footage, kind, args):
+        self.f, self.kind, self.a = footage, kind, args
+        self.start = footage.start(args["clip"], args["at"]) if "clip" in args else 0
+        self.label = label_image(args["label"], 6 if kind != "screen" else 5) if args.get("label") else None
+        self.still = card(args["lines"]) if kind == "card" else None
+        self.track = None
+        if kind == "zoom":
+            # Follow the courier, smoothed over a third of a second.
+            n = len(footage.frames(args["clip"]))
+            xs = np.array([footage.meta(args["clip"], i, "x") for i in range(n)], np.float32)
+            ys = np.array([footage.meta(args["clip"], i, "y") for i in range(n)], np.float32)
+            k = np.ones(21) / 21
+            pad = lambda a: np.pad(a, 10, mode="edge")  # noqa: E731
+            self.track = (np.convolve(pad(xs), k, "valid"), np.convolve(pad(ys), k, "valid"))
+
+    def render(self, i):
+        a, kind = self.a, self.kind
+        if kind == "card":
+            return self.still
+        j = self.start + i
+        f = self.f.frame(a["clip"], j)
+        if kind == "letterbox":
+            out = letterbox(f, a["y0"], a.get("caption"))
+        elif kind == "full":
+            out = scale_up(f[a["y0"]:a["y0"] + 90], 12)
+        elif kind == "zoom":
+            xs, ys = self.track
+            j = max(0, min(j, len(xs) - 1))
+            out = window(f, a["z"], xs[j] + a.get("dx", 0), ys[j] + a.get("dy", 0) - 8)  # y is the feet
+        elif kind == "screen":
+            out = screen(f)
+        elif kind == "logo":
+            out = scale_up(f[0:90], 12)
+        else:
+            raise ValueError(kind)
+        if kind in ("full", "zoom") and a.get("caption"):
+            out = out.copy()
+            paste(out, text_image([(a["caption"], 4, WHITE)], outline=True), 0, H - 96)
+        if self.label is not None:
+            out = out.copy()
+            if kind == "screen":
+                paste(out, self.label, (W - self.label.shape[1]) // 2, 72 + 864 + 30)
+            else:
+                paste(out, self.label, 72, 72 if a.get("label_top") else H - 72 - self.label.shape[0])
+        return out
 
 
 def shade(img, i, n, args):
@@ -203,7 +301,17 @@ def shade(img, i, n, args):
     return np.asarray(out, np.uint8) if out is not img else img
 
 
-def soundtrack(footage, total):
+def schedule():
+    """Each shot's (first, last) output frame, cut on the beat."""
+    out, t = [], 0.0
+    for beats, kind, args in TIMELINE:
+        a, b = round(t * FPS), round((t + beats * BEAT) * FPS)
+        out.append((a, b))
+        t += beats * BEAT
+    return out, t
+
+
+def soundtrack(footage, spans, total):
     def song(name):
         with wave.open(str(footage.folder / f"music-{name}.wav")) as w:
             return np.frombuffer(w.readframes(w.getnframes()), np.int16).reshape(-1, 2).astype(np.float32) / 32768
@@ -211,7 +319,7 @@ def soundtrack(footage, total):
     title, chase = song("title"), song("chase")
     out = np.zeros((int(total * RATE) + RATE, 2), np.float32)
 
-    def lay(src, at, start, length, gain=1.0, fade_in=0.0, fade_out=0.0):
+    def lay(src, at, start, length, gain, fade_in=0.0, fade_out=0.0):
         a, n = int(at * RATE), int(length * RATE)
         seg = src[int(start * RATE):int(start * RATE) + n].copy()
         env = np.ones(len(seg), np.float32)
@@ -223,20 +331,16 @@ def soundtrack(footage, total):
             env[-k:] = np.minimum(env[-k:], np.linspace(1, 0, k))
         out[a:a + len(seg)] += seg * env[:, None] * gain
 
-    end_chase = total - 9.0
-    lay(title, 0.0, 0.0, CHASE_AT, 0.9, fade_in=0.5, fade_out=0.15)
-    lay(chase, CHASE_AT, 0.0, end_chase - CHASE_AT + 1.5, 0.8, fade_out=1.5)
-    lay(title, end_chase, 0.0, total - end_chase, 0.75, fade_in=0.2, fade_out=3.0)
-    t = 0.0
-    for seconds, kind, args in TIMELINE:
+    logo = next(spans[n][0] for n, (_, _, a) in enumerate(TIMELINE) if a.get("title_theme")) / FPS
+    lay(chase, 0.0, 0.0, logo + 0.6, 0.8, fade_out=0.6)
+    lay(title, logo, 0.0, total - logo, 0.8, fade_in=0.05, fade_out=2.5)
+    for (a, b), (_, kind, args) in zip(spans, TIMELINE):
         if args.get("sfx"):
             fx = footage.sound(args["clip"])
-            per = len(fx) / len(footage.clip(args["clip"]))
-            start = int(args["at"] * per)
-            seg = fx[start:start + int(seconds * RATE)]
-            a = int(t * RATE)
-            out[a:a + len(seg)] += seg * 2.4  # effects-only output is quiet
-        t += seconds
+            per = len(fx) / len(footage.frames(args["clip"]))
+            start = int(footage.start(args["clip"], args["at"]) * per)
+            seg = fx[start:start + int((b - a) / FPS * RATE)]
+            out[int(a / FPS * RATE):int(a / FPS * RATE) + len(seg)] += seg * 2.4  # effects-only output is quiet
     peak = np.abs(out).max()
     if peak > 0.95:
         out *= 0.95 / peak
@@ -247,17 +351,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--footage", type=Path, default=GAME / "project/build/trailer")
     parser.add_argument("--output", type=Path, default=None)
-    parser.add_argument("--preview", type=Path, default=None, help="write one still per shot instead of the video")
+    parser.add_argument("--preview", type=Path, default=None, help="write each shot's first and middle frame instead")
     args = parser.parse_args()
     footage = Footage(args.footage)
-    total = sum(s for s, _, _ in TIMELINE)
+    spans, total = schedule()
+    shots = [Shot(footage, kind, a) for _, kind, a in TIMELINE]
     if args.preview:
         args.preview.mkdir(parents=True, exist_ok=True)
-        for n, (seconds, kind, a) in enumerate(TIMELINE):
-            frames = round(seconds * FPS)
-            Image.fromarray(shade(render(footage, kind, a, frames // 2), frames // 2, frames, a)).resize(
-                (W // 3, H // 3), Image.NEAREST).save(args.preview / f"{n:02d}-{kind}-{a.get('clip', 'card')}.png")
-        print(f"{len(TIMELINE)} stills, {total:.1f} s")
+        for n, ((a, b), shot) in enumerate(zip(spans, shots)):
+            for tag, i in (("a", 0), ("b", (b - a) // 2)):
+                img = shade(shot.render(i), i, b - a, shot.a)
+                Image.fromarray(img).resize((W // 4, H // 4), Image.NEAREST).save(
+                    args.preview / f"{n:02d}{tag}-{shot.kind}-{shot.a.get('clip', 'card')}.png")
+        print(f"{len(shots)} shots, {total:.1f} s")
         return
     output = args.output or args.footage / "toronto-dispatch-trailer.mp4"
     audio_path = args.footage / "trailer-audio.wav"
@@ -265,7 +371,7 @@ def main():
         w.setnchannels(2)
         w.setsampwidth(2)
         w.setframerate(RATE)
-        w.writeframes(soundtrack(footage, total).tobytes())
+        w.writeframes(soundtrack(footage, spans, total).tobytes())
     ffmpeg = subprocess.Popen(
         ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(FPS),
          "-i", "-", "-i", str(audio_path), "-c:v", "libx264", "-preset", "slow", "-crf", "18", "-pix_fmt", "yuv420p",
@@ -273,17 +379,14 @@ def main():
          "-movflags", "+faststart", "-shortest", str(output)],
         stdin=subprocess.PIPE)
     written = 0
-    for seconds, kind, a in TIMELINE:
-        frames = round(seconds * FPS)
-        still = render(footage, kind, a, 0) if kind == "card" else None
-        for i in range(frames):
-            img = still if still is not None else render(footage, kind, a, i)
-            ffmpeg.stdin.write(shade(img, i, frames, a).tobytes())
+    for (a, b), shot in zip(spans, shots):
+        for i in range(b - a):
+            ffmpeg.stdin.write(shade(shot.render(i), i, b - a, shot.a).tobytes())
             written += 1
     ffmpeg.stdin.close()
     if ffmpeg.wait():
         raise SystemExit("ffmpeg failed")
-    print(f"Wrote {output}: {written} frames, {written / FPS:.1f} s")
+    print(f"Wrote {output}: {len(shots)} shots, {written} frames, {written / FPS:.1f} s")
 
 
 if __name__ == "__main__":
