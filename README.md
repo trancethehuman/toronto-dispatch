@@ -6,6 +6,10 @@ Work a shift in a pixel-art Toronto: deliver packages, weave through traffic, pa
 
 ![Toronto Dispatch title](docs/screenshots/overhaul-title.png) ![High Park](docs/screenshots/greenery-high-park-after.png) ![CN Tower LookOut](docs/screenshots/interior-cn-lookout.png)
 
+![Countering a street fighter](docs/screenshots/street-fight-counter.png) ![An officer firing a visible projectile](docs/screenshots/officer-fires.png)
+
+Street-fight counters and projectile combat. Screenshots are captured from native ROM builds; [build provenance](docs/screenshots/provenance.json).
+
 **A playable work in progress.** Current source includes four compressed Toronto districts, 94 courier contracts, interiors, day/night weather, original music and saved progression. Releases are snapshots and may lag behind `main`. See the [roadmap](ROADMAP.md) and [testing record](TESTING.md) for progress.
 
 ## Play
